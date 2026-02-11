@@ -91,14 +91,15 @@ const useRondaGame = (gameMode = 'pvp') => { // DEFAULT pvp
           points = 1;
       }
 
-      if (announcement) {
+        if (announcement) {
+          const annId = Date.now();
           setMessage(`${player === 'player1' ? 'Player 1' : 'Player 2'} announced ${announcement}!`);
           setScores(prev => ({ ...prev, [player]: prev[player] + points }));
-          setAnnouncements(prev => [...prev, { player, type: announcement, id: Date.now() }]);
+          setAnnouncements(prev => [...prev, { player, type: announcement, id: annId }]);
           
           // Clear announcement after 3s
-          setTimeout(() => setAnnouncements(prev => prev.filter(a => a.id !== Date.now())), 3000);
-      }
+          setTimeout(() => setAnnouncements(prev => prev.filter(a => a.id !== annId)), 3000);
+        }
   };
 
   const nextRound = useCallback(() => {
@@ -175,31 +176,63 @@ const useRondaGame = (gameMode = 'pvp') => { // DEFAULT pvp
     else setPlayer2Hand(prev => prev.filter(c => !(c.suit === card.suit && c.value === card.value)));
 
     let newTableCards = [...tableCards];
-    const matchIndex = newTableCards.findIndex(c => c.value === card.value);
-    
-    if (matchIndex !== -1) {
-      // CAPTURE
-      const matchedCard = newTableCards[matchIndex];
-      let captured = [card, matchedCard];
-      
-      newTableCards.splice(matchIndex, 1); 
+    // find all candidate matches (same value)
+    const candidateIndices = newTableCards.map((c, i) => c.value === card.value ? i : -1).filter(i => i !== -1);
 
-      // Cao (Roaring) Check
-      // If we capture the card that was JUST played by the opponent
-      if (lastPlayedCardRef.current && matchedCard === lastPlayedCardRef.current) {
-          setMessage(`${player === 'player1' ? 'Player 1' : 'Player 2'} made Cao!`);
-          setScores(prev => ({ ...prev, [player]: prev[player] + 1 })); // Basic Cao is 1 point usually? Or 5? Rules say 1, 5, 10. Let's do 1 for simple match.
-          // Rule: "The player shouting ONE receives a token". So 1 point basic.
-      }
-
-      // Sequence (Estera) Logic 
-      const getNextRank = (val) => {
+    if (candidateIndices.length > 0) {
+      // Choose the candidate that yields the longest capture sequence
+      const simulateCaptureLength = (startIdx) => {
+        const temp = [...newTableCards];
+        let length = 1; // matched card itself
+        // remove the matched at startIdx
+        temp.splice(startIdx, 1);
+        const getNextRank = (val) => {
           if (val === 7) return 10;
           if (val === 12) return null;
           return val + 1;
+        };
+        let currentVal = getNextRank(card.value);
+        while (currentVal) {
+          const idx = temp.findIndex(c => c.value === currentVal);
+          if (idx !== -1) {
+            length += 1;
+            temp.splice(idx, 1);
+            currentVal = getNextRank(currentVal);
+          } else break;
+        }
+        return length;
       };
 
-      let currentVal = getNextRank(card.value);
+      let bestIdx = candidateIndices[0];
+      let bestLen = simulateCaptureLength(bestIdx);
+      for (let k = 1; k < candidateIndices.length; k++) {
+        const idx = candidateIndices[k];
+        const len = simulateCaptureLength(idx);
+        if (len > bestLen) {
+          bestLen = len;
+          bestIdx = idx;
+        }
+      }
+
+      // CAPTURE using bestIdx
+      const matchedCard = newTableCards[bestIdx];
+      let captured = [card, matchedCard];
+      newTableCards.splice(bestIdx, 1);
+
+        // Cao (Roaring) Check: compare by suit+value instead of object reference
+        if (lastPlayedCardRef.current && matchedCard.suit === lastPlayedCardRef.current.suit && matchedCard.value === lastPlayedCardRef.current.value) {
+          setMessage(`${player === 'player1' ? 'Player 1' : 'Player 2'} made Cao!`);
+          setScores(prev => ({ ...prev, [player]: prev[player] + 1 }));
+        }
+
+      // Sequence (Estera) Logic 
+        const getNextRank = (val) => {
+          if (val === 7) return 10;
+          if (val === 12) return null;
+          return val + 1;
+        };
+
+        let currentVal = getNextRank(card.value);
       while (currentVal) {
           const seqIndex = newTableCards.findIndex(c => c.value === currentVal);
           if (seqIndex !== -1) {
